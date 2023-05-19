@@ -2,7 +2,8 @@
 # shellcheck disable=SC2003
 :
 # shellcheck disable=SC2015
-DBG=${DBG:-0} && [ "0$DBG" -eq 0 ] || set -x
+DBG=${DBG:-0} && [ "0$DBG" -eq 0 ]; [ "$DBG" -eq 1 ] && set -x
+export DBG
 
 PATH=/bin:/usr/bin:$PATH
 export PATH
