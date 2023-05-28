@@ -12,11 +12,15 @@ Environment variables:
 
 ​	Template for new scripts
 
+------
+
 `cockpit-certs.sh`
 
 ​	Uses Let's Encrypts `certbot` tool to update existing cockpit certificate
 
 ​	-- expects certificate name to match `$HOSTNAME`
+
+------
 
 `join-AD.sh`
 
@@ -37,3 +41,21 @@ Environment variables:
 ​	`-h|--hostname=<target host>` 
 
 ​	`realm-name`
+
+------
+
+`add-cockpit-cert.sh`
+
+​	Get a LetsEncrypt certificate for cockpit on a remote Fedora host.  AWS credentials for "cerbot" are transferred to target.  If  `<remote account>` is not root then the account must be allowed sudo access.
+
+​	Arguments [optional] ...
+
+​	`[-v|--verbose]`
+
+​	`[-d|--dry-run]`
+
+​	`[l|--login=<remote account>]`
+
+​	`[m|--mail=<email address>]`
+
+​	`-h|--hostname=<target host>` 
