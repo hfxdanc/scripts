@@ -243,7 +243,7 @@ COMMANDS=$(cat <<- %E%O%T%
 			for domain in \\\$RENEWED_DOMAINS; do
 				if [ "\\\$domain" = "\\\$DOMAIN" ]; then
 					CERT=\\\$(/usr/libexec/cockpit-certificate-ensure --check | sed 's|^[^/]*\(/.*\\\$\)|\1|')
-					KEY=\\\$(echo \$CERT | sed 's/\.ce\?rt\\\$/.key/')
+					KEY=\\\$(echo \\\$CERT | sed 's/\.ce\?rt\\\$/.key/')
 
 					cat \\\$RENEWED_LINEAGE/fullchain.pem > \\\$CERT
 					cat \\\$RENEWED_LINEAGE/privkey.pem > \\\$KEY 

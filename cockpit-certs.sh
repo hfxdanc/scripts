@@ -7,9 +7,9 @@ PATH=/bin:/usr/bin
 export PATH
 
 if [ "$(id -ru)" = 0 ]; then
-    SUDO=""
+	SUDO=""
 else
-    SUDO="sudo"
+	SUDO="sudo"
 fi
 
 HOSTNAME=${HOSTNAME:-$(hostname -f)}
@@ -18,7 +18,7 @@ $SUDO certbot certificates --cert-name $HOSTNAME 2>/dev/null | awk '
 	BEGIN {
 		rc = 1
 	}
-       	/Certificate Name: / {
+	/Certificate Name: / {
 		if (split($0, a, ":") == 2) rc = 0
 	}
 	END {
@@ -29,6 +29,12 @@ if [ $? -eq 0 ]; then
 	$SUDO certbot renew --cert-name $HOSTNAME
 
 	CERT=$($SUDO /usr/libexec/cockpit-certificate-ensure --check | sed 's|^[^/]*\(/.*$\)|\1|')
+
+	if $(echo "$CERT" | grep -q "self-signed"); then
+		# self signed or no cockpit certificates found
+		CERT="/etc/cockpit/ws-certs.d/${HOSTNAME}.crt"
+	fi
+
 	KEY=$(echo $CERT | sed 's/\.crt$/.key/')
 
 	$SUDO cat /etc/letsencrypt/live/$HOSTNAME/fullchain.pem | $SUDO tee $CERT >/dev/null
@@ -38,5 +44,5 @@ if [ $? -eq 0 ]; then
 	$SUDO systemctl start cockpit.socket
 else
 	echo 2>&1 "no certificate found for $HOSTNAME"
-fi	
+fi
 
