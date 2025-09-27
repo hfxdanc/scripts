@@ -69,14 +69,17 @@ _trap '_exit' 0 3
 #
 ACCOUNT=""
 ADMIN=""
+DEBUG=""
 DRYRUN=""
-HOSTNAME=""
+SHORTNAME=""
 IPADDR=""
 NAME=""
 OPTS=""
 STDOUT=/dev/null
 STDERR=/dev/null
 VERBOSE=""
+
+[ "$DBG" -eq 0 ] || DEBUG="-x"
 
 if [ "$(id -ru)" = 0 ]; then
 	ID=""
@@ -92,12 +95,12 @@ getopt -T >/dev/null 2>&1
 usage() {
 	ERRNO=0; [ $# -ge 1 ] && ERRNO=$1 && shift
 
-	echo 2>&1 "$PROG: [-v|--verbose] [-d|--dry-run] [-i|--ip=<addr>] [l|--login=<remote account>] -A|--admin=<AD Administrator> -h|--hostname=<target host> realm-name"
+	echo 2>&1 "$PROG: [-v|--verbose] [-d|--dry-run] [-i|--ip=<addr>] [l|--login=<remote account>] -A|--admin=<AD Administrator> -s|--shortname=<target host> realm-name"
 
 	_exit "$ERRNO"
 }
 
-ARGS=$(getopt --options vdi:l:A:h: --longoptions verbose,dry-run,ip:,login:,admin:,hostname: --name "$PROG" -- ${1+"$@"}) || usage $?
+ARGS=$(getopt --options vdi:l:A:s: --longoptions verbose,dry-run,ip:,login:,admin:,shortname: --name "$PROG" -- ${1+"$@"}) || usage $?
 eval "set -- $ARGS"
 
 while true; do
@@ -125,8 +128,8 @@ while true; do
 		ADMIN=$2
 		shift 2
 		;;
-	-h|--hostname)
-		HOSTNAME=$2
+	-s|--shortname)
+		SHORTNAME=$2
 		shift 2
 		;;
 	--)  
@@ -148,9 +151,27 @@ if [ -n "$REALM" ]; then
 	fi
 fi
 
-[ -z "$HOSTNAME" ] || [ -z "$ADMIN" ] && usage 1
-FQDN=$(echo "${HOSTNAME}.${DOMAIN}" | tr '[:upper:]' '[:lower:]')
+[ -z "$SHORTNAME" ] || [ -z "$ADMIN" ] && usage 1
+FQDN=$(echo "${SHORTNAME}.${DOMAIN}" | tr '[:upper:]' '[:lower:]')
 NAME=$(echo "$FQDN" | cut -d. -f1 | tr '[:lower:]' '[:upper:]')
+
+COMMANDS=$(cat <<- %E%O%T%
+	PATH=/bin:/usr/bin:/usr/sbin
+	export PATH
+
+    rpm -q --quiet openssh-askpass
+    RC=\$?
+
+    rpm -q --quiet waypipe
+
+    exit -- \$(expr \$? + \${RC})
+%E%O%T%
+)
+
+echo "$COMMANDS" | ssh "${ACCOUNT:-$ID}"@"${IPADDR-:$SHORTNAME}" "/bin/sh $DEBUG -"
+if [ $? -ne 0 ]; then
+	_exit 2 "waypipe and openssh-askpass (or equivalent) packages must be pre-installed on target"
+fi
 
 # set-up AD
 TMPFILE=$(umask 0077; mktemp --tmpdir "krb5cc_${PROG}XXX")
@@ -207,24 +228,21 @@ COMMANDS=$(cat <<- %E%O%T%
 	TMPFILE=\$(mktemp --tmpdir krb5cc_XXXXXXXX)
 	RC=0
 
-	trap "rm -f \$TMPFILE" EXIT
+	#trap "rm -f \$TMPFILE" EXIT
 
 	[ "\$FQDN" = "$FQDN" ] || RC=1
-
-	if [ -z "\$SSH_ASKPASS" ]; then
-		rpm -q --quiet openssh-askpass || RC=2
-	fi
 
 	if [ \$RC -eq 0 ]; then
 		cat <<- %e%o%t% | base64 --decode >\$TMPFILE
 			$(base64 "$TMPFILE")
 		%e%o%t%
 
-		SUDO_ASKPASS=\${SSH_ASKPASS:-"/usr/libexec/openssh/gnome-ssh-askpass"}
+		SUDO_ASKPASS=${SSH_ASKPASS:-"/usr/libexec/openssh/gnome-ssh-askpass"}
 		export SUDO_ASKPASS
 
 		# Install required packages
 		rpm -q --quiet adcli || $SUDO dnf -y install adcli
+		rpm -q --quiet autofs || $SUDO dnf -y install autofs
 		rpm -q --quiet crudini || $SUDO dnf -y install crudini
 		rpm -q --quiet oddjob || $SUDO dnf -y install oddjob
 		rpm -q --quiet oddjob-mkhomedir || $SUDO dnf -y install oddjob-mkhomedir
@@ -246,6 +264,7 @@ COMMANDS=$(cat <<- %E%O%T%
 			$DOMAIN
 
 		# Update AD if join OK
+        sleep 5
 		$SUDO adcli testjoin $VERBOSE || RC=4
 	fi
 
@@ -259,13 +278,13 @@ COMMANDS=$(cat <<- %E%O%T%
 	fi
 
 	if [ \$RC -eq 0 ]; then
-		$SUDO crudini --set --existing /etc/sssd/sssd.conf sssd services "nss, pam, pac, autofs" || RC=10
+		$SUDO crudini --set --existing /etc/sssd/sssd.conf sssd services "nss, pam, pac, autofs, sudo" || RC=10
 		$SUDO crudini --set /etc/sssd/sssd.conf "domain/\${DOMAIN}" fallback_homedir "/home/%u@%d" || RC=\$(expr \$RC + 1)
 		$SUDO crudini --set /etc/sssd/sssd.conf "domain/\${DOMAIN}" use_fully_qualified_names "False" || RC=\$(expr \$RC + 1)
 		$SUDO crudini --set /etc/sssd/sssd.conf "domain/\${DOMAIN}" ldap_id_mapping "False" || RC=\$(expr \$RC + 1)
 		$SUDO crudini --set /etc/sssd/sssd.conf "domain/\${DOMAIN}" auto_private_groups "False" || RC=\$(expr \$RC + 1)
 		$SUDO crudini --set /etc/sssd/sssd.conf "domain/\${DOMAIN}" autofs_provider "ad" || RC=\$(expr \$RC + 1)
-
+		$SUDO crudini --set /etc/sssd/sssd.conf "domain/\${DOMAIN}" sudo_provider "ad" || RC=\$(expr \$RC + 1)
 	fi
 
 	if [ \$RC -eq 0 ]; then
@@ -278,13 +297,13 @@ COMMANDS=$(cat <<- %E%O%T%
 )
 
 if [ "$DBG" -eq 0 ]; then
-	echo "$COMMANDS" | $DRYRUN ssh -X "${ACCOUNT:-$ID}"@"${IPADDR-:$HOSTNAME}" '/bin/sh -'
+	echo "$COMMANDS" | $DRYRUN waypipe ssh -X "${ACCOUNT:-$ID}"@"${IPADDR-:$SHORTNAME}" "/bin/sh ${DEBUG} -"
 elif [ "$DBG" -eq 2 ]; then
-	echo "$COMMANDS" | ssh "${ACCOUNT:-$ID}"@"${IPADDR-:$HOSTNAME}" '/bin/cat - >/tmp/join.sh'
-	ssh -X "${ACCOUNT:-$ID}"@"${IPADDR-:$HOSTNAME}"
+	echo "$COMMANDS" | ssh "${ACCOUNT:-$ID}"@"${IPADDR-:$SHORTNAME}" '/bin/cat - >/tmp/join.sh'
+	waypipe ssh -X "${ACCOUNT:-$ID}"@"${IPADDR-:$SHORTNAME}"
 else
 	# shellcheck disable=SC3037
-	echo -e "set -x\n$COMMANDS" | ssh -X "${ACCOUNT:-$ID}"@"${IPADDR-:$HOSTNAME}" '/bin/sh -'
+    echo "$COMMANDS" | waypipe ssh -X "${ACCOUNT:-$ID}"@"${IPADDR-:$SHORTNAME}" "/bin/sh ${DEBUG} -"
 fi
 RC=$?
 
@@ -294,9 +313,6 @@ case $RC in
 	;;
 1)
 	_exit $RC "FQDN on target does not match pre-created AD account"
-	;;
-2)
-	_exit $RC "openssh-askpass (or equivalent) package must be pre-installed on target"
 	;;
 3)
 	_exit $RC "failed to install neccesary packages on target"

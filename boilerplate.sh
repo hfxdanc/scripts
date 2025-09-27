@@ -9,7 +9,7 @@ PATH=/bin:/usr/bin:$PATH
 export PATH
 
 PROG=$(realpath "$0" | sed 's|^.*\/||')
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034,SC2064
 PID=$$
 TMPFILES=""
 TMPDIRS=""

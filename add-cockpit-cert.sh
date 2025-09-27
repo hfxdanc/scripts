@@ -209,10 +209,24 @@ COMMANDS=$(cat <<- %E%O%T%
 	trap "rm -rf \$HOME/.aws/certbot" EXIT SIGINT
 
 	FQDN=\$(hostname -f)
+	SSH_ASKPASS=${SSH_ASKPASS}
+	export SSH_ASKPASS
 	RC=0
 
-	if [ -z "\$SSH_ASKPASS" ]; then
-		rpm -q --quiet openssh-askpass || RC=1
+	rpm -q --quiet cockpit || RC=1
+
+	if [ \$RC -eq 0 ]; then
+		if [ -n "\$SSH_ASKPASS" ]; then
+			rpm -q --quiet openssh-askpass || RC=2
+		fi
+	fi
+
+	if [ \$RC -eq 0 ]; then
+		rpm -q --quiet waypipe || RC=3
+	fi
+
+	if [ \$RC -eq 0 ]; then
+		rpm -q --quiet xorg-x11-xauth || RC=4
 	fi
 
 	if [ \$RC -eq 0 ]; then
@@ -223,7 +237,7 @@ COMMANDS=$(cat <<- %E%O%T%
 		rpm -q --quiet certbot || $SUDO dnf -y install certbot
 		rpm -q --quiet python3-certbot-dns-route53 || $SUDO dnf -y install python3-certbot-dns-route53
 
-		rpm -q --quiet certbot python3-certbot-dns-route53 || RC=2
+		rpm -q --quiet certbot python3-certbot-dns-route53 || RC=5
 	fi
 
 	if [ \$RC -eq 0 ]; then
@@ -239,10 +253,22 @@ COMMANDS=$(cat <<- %E%O%T%
 			[ "\\\$(id -ru)" -eq 0 ] || exit
 
 			systemctl is-enabled --quiet cockpit.socket || exit
+			FQDN=\\\$(hostname -f)
 			DOMAIN=\\\$(/usr/libexec/cockpit-certificate-ensure --check | sed 's|^.*/\([^/]*\)\.ce\?rt\\\$|\1|')
+			if \\\$(echo "\\\$DOMAIN" | grep -q "self-signed"); then
+				# self signed or no cockpit certificates found
+				rm -f /etc/cockpit/ws-certs.d/* 2>/dev/null
+				DOMAIN="\\\$FQDN"
+				CERT="/etc/cockpit/ws-certs.d/\\\${FQDN}.crt"
+			fi
+
 			for domain in \\\$RENEWED_DOMAINS; do
 				if [ "\\\$domain" = "\\\$DOMAIN" ]; then
 					CERT=\\\$(/usr/libexec/cockpit-certificate-ensure --check | sed 's|^[^/]*\(/.*\\\$\)|\1|')
+					if \\\$(echo "\\\$CERT" | grep -q "self-signed"); then
+						# self signed or no cockpit certificates found
+						CERT="/etc/cockpit/ws-certs.d/\\\${FQDN}.crt"
+					fi
 					KEY=\\\$(echo \\\$CERT | sed 's/\.ce\?rt\\\$/.key/')
 
 					cat \\\$RENEWED_LINEAGE/fullchain.pem > \\\$CERT
@@ -272,24 +298,14 @@ COMMANDS=$(cat <<- %E%O%T%
 			--agree-tos \
 			--email "$MAIL"
 
-		[ \$? -eq 0 ] || RC=3  
-	fi
-
-	if [ \$RC -eq 0 ]; then
-		RENEWED_DOMAINS="\$FQDN"
-		RENEWED_LINEAGE="/etc/letsencrypt/live/\$FQDN"
-		export RENEWED_DOMAINS RENEWED_LINEAGE
-
-		$SUDO /bin/sh $DEBUG /etc/letsencrypt/renewal-hooks/deploy/cockpit.sh
-
-		[ \$? -eq 0 ] || RC=4  
+		[ \$? -eq 0 ] || RC=6  
 	fi
 
 	exit \$RC
 %E%O%T%
 )
 
-echo "$COMMANDS" | ssh -X "${ACCOUNT:-$ID}"@"${TARGET}" "/bin/sh $DEBUG -"
+echo "$COMMANDS" | waypipe ssh -X "${ACCOUNT:-$ID}"@"${TARGET}" "/bin/sh $DEBUG -"
 RC=$?
 
 case $RC in
@@ -297,18 +313,26 @@ case $RC in
 	_exit $RC "Success!"
 	;;
 1)
-	_exit $RC "openssh-askpass (or equivalent) package must be pre-installed on target"
+	_exit $RC "cockpit is not install on target, skipping certificate install"
 	;;
 2)
-	_exit $RC "failed to install neccesary packages on target"
+	_exit $RC "openssh-askpass (or equivalent) package must be pre-installed on target"
 	;;
 3)
-	_exit $RC "failed to obtain LetsEncypt certificate"
+	_exit $RC "waypipe package must be pre-installed on target"
 	;;
 4)
-	_exit $RC "failed to install certificate for cockpit"
+	_exit $RC "xauth package must be pre-installed on target"
+	;;
+5)
+	_exit $RC "failed to install neccesary packages on target"
+	;;
+6)
+	_exit $RC "failed to obtain LetsEncypt certificate"
 	;;
 *)
 	_exit 0
 	;;
 esac
+
+# vi: set noexpandtab:
